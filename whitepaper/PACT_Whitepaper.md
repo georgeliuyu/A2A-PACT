@@ -252,6 +252,7 @@ SIA（状态不变动作）：
 - Nenad Tomasev：whitepaper/expert_views/nenad_tomasev.md
 - E. Glen Weyl：whitepaper/expert_views/glen_weyl.md
 - 白隼（Blade Reviewer）：whitepaper/expert_views/blade_reviewer.md
+- George：whitepaper/expert_views/george.md
 
 （注）各视角从“最小内置/机制稳健/VAE 治理/多元协作/评审可执行”出发，为 PACT 白皮书提供关键要点。
 
