@@ -306,7 +306,4 @@ SIA（状态不变动作）：
 
 ---
 
-## 附录 F：辩论纪要索引（Debates）
-
-- 第二轮：whitepaper/debate/round_02.md
-- 第三～十二轮：whitepaper/debate/rounds_03-12.md
+ 
