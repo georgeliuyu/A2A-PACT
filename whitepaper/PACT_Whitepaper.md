@@ -292,3 +292,14 @@ SIA（状态不变动作）：
 （注）各视角从“最小内置/机制稳健/VAE 治理/多元协作/评审可执行”出发，为 PACT 白皮书提供关键要点。
 
 注：本白皮书与 `pact_spec.md` 一致，作为架构与生态说明文档；规范性细节以 `pact_spec.md` 为唯一语义源（SSOT）。
+
+---
+
+## 附录 E：专家“有说服力的构思”索引（Persuasive Outlines）
+
+- Vitalik Buterin：whitepaper/expert_views/outlines/vitalik_buterin.md
+- Tim Roughgarden：whitepaper/expert_views/outlines/tim_roughgarden.md
+- Nenad Tomasev：whitepaper/expert_views/outlines/nenad_tomasev.md
+- E. Glen Weyl：whitepaper/expert_views/outlines/glen_weyl.md
+- 白隼（Blade Reviewer）：whitepaper/expert_views/outlines/blade_reviewer.md
+- George：whitepaper/expert_views/outlines/george.md
