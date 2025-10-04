@@ -5,6 +5,7 @@
 发布日期：2025-09-30
 
 > 共识要点：本规范为唯一语义源（SSOT）。金额口径统一为 A ≤ E_c(t)，协议中无独立 P。以下清单为四位作者对齐后的统一结构与约束。
+> 重要：`E_c`、`T_due`、`T_rev`、`T_dis` 为“每笔订单协商参数（per‑order, negotiated）”，协议层不提供固定默认值；客户端/产品层可给出模板或建议值，但不具规范效力。
 
 ## 0) 规范与追溯锚点
 - 规范用语：MUST/SHOULD/MAY/MUST NOT。
@@ -23,34 +24,47 @@
 
 ## 2) 模型与记号（A ≤ E_c 口径）
 - 参与者：Client、Contractor。
-- 时间与计时器：`startTime, readyAt, disputeStart`；`T_due, T_rev, T_dis`（延长仅允许“向后”）。
+- 时间与计时器：`startTime, readyAt, disputeStart`；`T_due, T_rev, T_dis`（相对时长，单位：秒；延长仅允许“向后”）。
 - 资金与金额：`E_c(t)`（托管额，单调不减、不可减少）、`A`（实际结清额，0 ≤ A ≤ E_c(t_settle)）。
 - 结清时间点定义（t_settle）：`approveReceipt` 确认时刻或 `timeoutSettle` 触发时刻，或 `acceptPriceBySig` 被对手方接受并链上确认的时刻；在该时刻计算 `A` 与退款。
 - 可用性与成本：`κ(t)`（Executing∈[0,1]；Reviewing/Disputing=1）、`R(t)`、`I(t)`；收益 `(V−A, A−C)`。
 - 对手与信息结构：自利/半理性；公开 `state/times/escrow`；协商采用可验证签名（EIP‑712/1271）。
-- 单位与时间：金额以 token 最小单位计价；时间以 `block.timestamp`（秒）计；区块时间抖动不作为纠纷判断依据；所有 `*Sec` 表示秒的相对时长。
+- 单位与时间：金额以 token 最小单位计价；时间以 `block.timestamp`（秒）计；区块时间抖动不作为纠纷判断依据；命名约定：
+  - `*Sec` 后缀仅用于 API/输入参数的相对时长（秒）（如 `newDueSec/newRevSec`）；API 参数命名 MUST 使用 `*Sec` 后缀；
+  - 模型参数使用 `T_*` 命名（如 `T_due/T_rev/T_dis`），表示相对时长（秒）（MUST）；
+  - `startTime/readyAt/disputeStart` 为绝对时间（时间戳）。
 - 记号约定：文中 `now ≡ block.timestamp`；CEI ≡ checks–effects–interactions。
+
+### 2.1 参数协商与范围（规范性）
+- 协商主体与生效时点（MUST）：`E_c`、`T_due`、`T_rev`、`T_dis` 由 Client 与 Contractor 针对“每一笔订单”达成一致；实现必须在订单建立/接受时将其作为“订单字段”固化存储。协议不提供全局/合约级默认值。
+- 修改规则（MUST）：
+  - `E_c(t)` 仅可通过 `topUpEscrow` 单调增加，不得减少；
+  - `T_due` 与 `T_rev` 仅允许在争议发生前“单调延后”（见 SIA1/SIA2），不得缩短；
+  - `T_dis` 自设置后固定，协议层不提供延长入口（禁止 `extendDispute`）。
+- 有界性（MUST）：三者必须为有限值且大于 0；为抵御链上重组，`T_dis ≥ 2·T_reorg`（由部署方按目标链给出 `T_reorg` 估计）。
+- 无默认（MUST）：任何“默认/示例数值”（例如白皮书或工具链中的 `{E_c=500, T_rev=24h, T_dis=2h}`）均为信息性（informative），不具规范效力；实现不得在未显式传入的情况下暗设数值。
+- 建议（SHOULD）：产品/客户端可根据场景提供“参数模板/推荐区间”，但应清晰标注为建议且允许用户覆盖。
 
 ## 3) 状态机与守卫（规范性，SSOT）
 
 ### 3.0 允许的转换（除此之外无其他，MUST）
 注：变量与时间相关的副作用统一见 3.2 “守卫与副作用”。下列每条转移标注发起方：client、contractor、任意（三类含义：买方、卖方、无主体限制）。
-- E1 Initialized —acceptOrder→ Executing（发起方：contractor）
-- E2 Initialized —cancelOrder→ Cancelled（发起方：client/contractor）
-- E3 Executing —markReady→ Reviewing（发起方：contractor）
-- E4 Executing —approveReceipt→ Settled（发起方：client）
-- E5 Executing —raiseDispute→ Disputing（发起方：client/contractor）
-- E6 Executing —cancelOrder→ Cancelled（发起方：client）
-- E7 Executing —cancelOrder→ Cancelled（发起方：contractor）
-- E8 Executing —requestForfeit→ Forfeited（发起方：client/contractor）
-- E9 Reviewing —approveReceipt→ Settled（发起方：client）
-- E10 Reviewing —timeoutSettle→ Settled（发起方：任意）
-- E11 Reviewing —raiseDispute→ Disputing（发起方：client/contractor）
-- E12 Reviewing —cancelOrder→ Cancelled（发起方：contractor）
-- E13 Reviewing —requestForfeit→ Forfeited（发起方：client/contractor）
-- E14 Disputing —acceptPriceBySig→ Settled（发起方：对手方（client 或 contractor 之一））
-- E15 Disputing —timeoutForfeit→ Forfeited（发起方：任意）
-- E16 Disputing —requestForfeit→ Forfeited（发起方：client/contractor）
+- E1 Initialized -acceptOrder-> Executing（发起方：contractor）
+- E2 Initialized -cancelOrder-> Cancelled（发起方：client/contractor）
+- E3 Executing -markReady-> Reviewing（发起方：contractor）
+- E4 Executing -approveReceipt-> Settled（发起方：client）
+- E5 Executing -raiseDispute-> Disputing（发起方：client/contractor）
+- E6 Executing -cancelOrder-> Cancelled（发起方：client）
+- E7 Executing -cancelOrder-> Cancelled（发起方：contractor）
+- E8 Executing -requestForfeit-> Forfeited（发起方：client/contractor）
+- E9 Reviewing -approveReceipt-> Settled（发起方：client）
+- E10 Reviewing -timeoutSettle-> Settled（发起方：任意）
+- E11 Reviewing -raiseDispute-> Disputing（发起方：client/contractor）
+- E12 Reviewing -cancelOrder-> Cancelled（发起方：contractor）
+- E13 Reviewing -requestForfeit-> Forfeited（发起方：client/contractor）
+- E14 Disputing -acceptPriceBySig-> Settled（发起方：对手方（client 或 contractor 之一））
+- E15 Disputing -timeoutForfeit-> Forfeited（发起方：任意）
+- E16 Disputing -requestForfeit-> Forfeited（发起方：client/contractor）
 
 ### 3.1 状态不变动作（SIA，MUST）
 - SIA1：`extendDue(orderId, newDueSec)`（仅 client）要求 `newDueSec > 当前 T_due`（严格延后）。
@@ -59,11 +73,12 @@
 - 适用范围：SIA3 允许于 Initialized/Executing/Reviewing；终态不允许 Top‑up。
 
 ### 3.2 守卫与副作用（MUST）
+- 参数持久化（MUST）：实现必须在订单建立/接受时持久化记录 `T_due/T_rev/T_dis` 的初值（来自双方协商）；不得在链上以“隐式默认”替代缺失值。
 - startTime/readyAt/disputeStart 为一次性锚点（设置后 MUST NOT 回拨或重置）；`T_due/T_rev` 仅允许单调延长；不提供 extendDispute。
 - G.E1：`acceptOrder` 发生时，副作用：`startTime = now`（首次进入 Executing 时设置锚点）。
 - G.E3：`markReady` 仅当 `now < startTime + T_due`；副作用：设置 `readyAt=now` 并（重新）起算评审计时 `T_rev`。
 - G.E4/E9：`approveReceipt` 仅适用于 `state ∈ {Executing, Reviewing}`（Disputing 不适用）。
-- G.E10：`timeoutSettle` 仅当 `state=Reviewing` 且 `now ≥ readyAt + T_rev` 且当前未处于 Disputing。
+- G.E10：`timeoutSettle` 仅当 `state=Reviewing` 且 `now ≥ readyAt + T_rev`。
 - G.E5/E11：`raiseDispute` 允许于 Executing/Reviewing 任意时刻进入 Disputing；副作用：设置 `disputeStart=now`。
 - G.E6：`cancelOrder`（client）仅当“从未 Ready（`readyAt` 未设置）且 `now ≥ startTime + T_due`”。
 - G.E7：`cancelOrder`（contractor）允许（无额外守卫）。
@@ -87,11 +102,13 @@
   - INV.8 Forfeited：`escrow → ForfeitPool`（不向外部分配），`owed/refund` 清零。
   - INV.9 比例路径兼容（可选）：`amountToSeller = floor(escrow * num / den)`；余数全部计入买方退款。实现 MUST 使用安全的“mulDiv 向下取整”或等效无溢出实现；任何溢出/下溢 MUST revert；禁止四舍五入与精度提升。
 - INV.10 Pull 语义：状态变更仅“记账可领额”，实际转账仅在 `withdrawPayout/withdrawRefund` 发生；禁止在状态变更入口直接 `transfer`。
+ - INV.11 锚点一次性：`startTime/readyAt/disputeStart` 一旦设置，MUST NOT 修改或回拨（仅允许“未设置 → 设置一次”）。
+ - INV.12 计时器规则：`T_due/T_rev` 仅允许延后（单调增加，且在进入 Disputing 前）；`T_dis` 固定且不可延长。
 
 ## 5) 安全与威胁模型
 - 签名与重放（MUST）：采用 EIP‑712/1271；签名数据至少包含 `{orderId, amountToSeller(=A), proposer, nonce, deadline}`；`amountToSeller ≤ escrow`；`nonce` 的作用域至少为 `{orderId, proposer}` 且一次性消费；`deadline` 基于 `block.timestamp` 判定；必须防止跨订单重放。
 - 重入与交互顺序：提现 `nonReentrant`，遵循 CEI。
-- 时间边界：统一区块时间；`T_*` 仅允许延后（单调）。
+- 时间边界：统一区块时间；`T_due/T_rev` 仅允许延后（单调），`T_dis` 固定且不可延长。
 - 残余风险：破坏型对手导致的没收外部性 → 由社会层资质/信誉/稽核约束。
 
 ## 6) 收益比较与均衡（SPE 概要）
@@ -139,27 +156,28 @@
 - T3：接口标准化与生态协作，保持“最小内置”。
 
 ## 12) 附录（追溯矩阵）
+风格说明：本节“转换箭头”的规范写法为 ASCII `->`；如渲染为 Unicode 箭头（→），视为等价显示，不改变含义。
 信息性示例（Trace）：
-- Trace.1：E4（Executing→Settled，approveReceipt）→ API: `approveReceipt` → INV.1 → EVT: `Settled` → MET: 结清延迟/资金滞留。
-- Trace.2：E14（Disputing→Settled，acceptPriceBySig）→ API: `acceptPriceBySig` → INV.2 → EVT: `PriceSettled/Settled` → MET: 争议时长/报价接受率。
-- Trace.3：E15（Disputing→Forfeited，timeoutForfeit）→ API: `timeoutForfeit` → EVT: `Forfeited` → GOV: 没收率/争议时长。
+- Trace.1：E4（Executing->Settled，approveReceipt） -> API: `approveReceipt` -> INV.1 -> EVT: `Settled` -> MET: 结清延迟/资金滞留。
+- Trace.2：E14（Disputing->Settled，acceptPriceBySig） -> API: `acceptPriceBySig` -> INV.2 -> EVT: `PriceSettled, Settled` -> MET: 争议时长/报价接受率。
+- Trace.3：E15（Disputing->Forfeited，timeoutForfeit） -> API: `timeoutForfeit` -> EVT: `Forfeited` -> GOV: 没收率/争议时长。
 
 全量映射（覆盖 E1..E16；至少一项指标）：
-- E1 Initialized→Executing（acceptOrder）→ API: `acceptOrder` → EVT: — → MET: MET.6（接单延迟）。
-- E2 Initialized→Cancelled（cancel）→ API: `cancelOrder` → INV: INV.3（退款计算）→ EVT: `Cancelled` → GOV: GOV.1。
-- E3 Executing→Reviewing（markReady）→ API: `markReady` → EVT: — → MET: MET.6（执行→评审时延）。
-- E4 Executing→Settled（approveReceipt）→ API: `approveReceipt` → INV.1 → EVT: `Settled` → MET: MET.1/MET.3。
-- E5 Executing→Disputing（raiseDispute）→ API: `raiseDispute` → EVT: — → MET: MET.6（争议触发时延）。
-- E6 Executing→Cancelled（cancel: Client 条件）→ API: `cancelOrder` → INV: INV.3 → EVT: `Cancelled` → GOV: GOV.1。
-- E7 Executing→Cancelled（cancel: Contractor）→ API: `cancelOrder` → INV: INV.3 → EVT: `Cancelled` → GOV: GOV.1。
-- E8 Executing→Forfeited（requestForfeit）→ API: `requestForfeit` → INV: INV.8 → EVT: `Forfeited` → GOV: GOV.1。
-- E9 Reviewing→Settled（approveReceipt）→ API: `approveReceipt` → INV.1 → EVT: `Settled` → MET: MET.1/MET.3。
-- E10 Reviewing→Settled（timeoutSettle）→ API: `timeoutSettle` → INV.1 → EVT: `Settled` → MET: MET.1。
-- E11 Reviewing→Disputing（raiseDispute）→ API: `raiseDispute` → EVT: — → MET: MET.6（争议触发时延）。
-- E12 Reviewing→Cancelled（cancel: Contractor）→ API: `cancelOrder` → INV: INV.3 → EVT: `Cancelled` → GOV: GOV.1。
-- E13 Reviewing→Forfeited（requestForfeit）→ API: `requestForfeit` → INV: INV.8 → EVT: `Forfeited` → GOV: GOV.1。
-- E14 Disputing→Settled（acceptPriceBySig）→ API: `acceptPriceBySig` → INV.2 → EVT: `PriceSettled/Settled` → MET: MET.4（报价接受率）。
-- E15 Disputing→Forfeited（timeoutForfeit）→ API: `timeoutForfeit` → INV: INV.8 → EVT: `Forfeited` → GOV: GOV.1/GOV.3（争议时长）。
-- E16 Disputing→Forfeited（requestForfeit）→ API: `requestForfeit` → INV: INV.8 → EVT: `Forfeited` → GOV: GOV.1。
+- E1 Initialized->Executing（acceptOrder） -> API: `acceptOrder` -> INV: INV.11 -> EVT: (none) -> MET: MET.6（接单延迟）。
+- E2 Initialized->Cancelled（cancel） -> API: `cancelOrder` -> INV: INV.3（退款计算） -> EVT: `Cancelled` -> GOV: GOV.1。
+- E3 Executing->Reviewing（markReady） -> API: `markReady` -> INV: INV.11 -> EVT: (none) -> MET: MET.6（执行->评审时延）。
+- E4 Executing->Settled（approveReceipt） -> API: `approveReceipt` -> INV.1 -> EVT: `Settled` -> MET: MET.1/MET.3。
+- E5 Executing->Disputing（raiseDispute） -> API: `raiseDispute` -> INV: INV.11 -> EVT: (none) -> MET: MET.6（争议触发时延）。
+- E6 Executing->Cancelled（cancel: Client 条件） -> API: `cancelOrder` -> INV: INV.3 -> EVT: `Cancelled` -> GOV: GOV.1。
+- E7 Executing->Cancelled（cancel: Contractor） -> API: `cancelOrder` -> INV: INV.3 -> EVT: `Cancelled` -> GOV: GOV.1。
+- E8 Executing->Forfeited（requestForfeit） -> API: `requestForfeit` -> INV: INV.8 -> EVT: `Forfeited` -> GOV: GOV.1。
+- E9 Reviewing->Settled（approveReceipt） -> API: `approveReceipt` -> INV.1 -> EVT: `Settled` -> MET: MET.1/MET.3。
+- E10 Reviewing->Settled（timeoutSettle） -> API: `timeoutSettle` -> INV: INV.1 -> EVT: `Settled` -> MET: MET.1。
+- E11 Reviewing->Disputing（raiseDispute） -> API: `raiseDispute` -> INV: INV.11 -> EVT: (none) -> MET: MET.6（争议触发时延）。
+- E12 Reviewing->Cancelled（cancel: Contractor） -> API: `cancelOrder` -> INV: INV.3 -> EVT: `Cancelled` -> GOV: GOV.1。
+- E13 Reviewing->Forfeited（requestForfeit） -> API: `requestForfeit` -> INV: INV.8 -> EVT: `Forfeited` -> GOV: GOV.1。
+- E14 Disputing->Settled（acceptPriceBySig） -> API: `acceptPriceBySig` -> INV: INV.2 -> EVT: `PriceSettled, Settled` -> MET: MET.4（报价接受率）。
+- E15 Disputing->Forfeited（timeoutForfeit） -> API: `timeoutForfeit` -> INV: INV.8 -> EVT: `Forfeited` -> GOV: GOV.1/GOV.3（争议时长）。
+- E16 Disputing->Forfeited（requestForfeit） -> API: `requestForfeit` -> INV: INV.8 -> EVT: `Forfeited` -> GOV: GOV.1。
 
 ---
