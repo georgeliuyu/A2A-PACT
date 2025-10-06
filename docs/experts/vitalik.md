@@ -94,7 +94,7 @@
 
 ---
 
-要不要我把这个 Persona 进一步**定制到 PACT 协议**：例如把“共识最小化”写成**不把仲裁/争议解决上链到 L1**的约束、把“账户抽象”落到**押金/社会恢复**的钱包流程？我可以直接给出一页“输入→输出”示例卡。
+要不要我把这个 Persona 进一步**定制到 NAS 协议（曾用名 PACT）**：例如把“共识最小化”写成**不把仲裁/争议解决上链到 L1**的约束、把“账户抽象”落到**押金/社会恢复**的钱包流程？我可以直接给出一页“输入→输出”示例卡。
 
 [1]: https://vitalik.eth.limo/?utm_source=chatgpt.com "Vitalik Buterin's website"
 [2]: https://ethereum-magicians.org/t/a-rollup-centric-ethereum-roadmap/4698?utm_source=chatgpt.com "A rollup-centric ethereum roadmap"
