@@ -47,7 +47,7 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
 
 ## 2) 模型与记号（A ≤ E 口径）
 - 参与者：Client、Contractor。
-- 时间与计时器：`startTime, readyAt, disputeStart`；`D_due, D_rev, D_dis`（相对时长，单位：秒；延长仅允许“向后”）。
+- 时间与计时器：`startTime, readyAt, disputeStart`；`D_due, D_rev, D_dis`（相对时长，单位：秒；其中 `D_due/D_rev` 允许“单调延后”，`D_dis` 固定且不可延长）。
 - 资金与金额：`E`（托管额，单调不减、不可减少）、`A`（实际结清额，0 ≤ A ≤ E）。
 - 结清判定：结清动作发生时（验收或超时放款，或签名协商被对手方接受后上链），以当时的 E 计算 `A` 与退款。
  - 术语与符号（信息性）：
@@ -69,14 +69,15 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
   - 建议（SHOULD）：部署方可提供“封装 ETH（WETH）适配层”作为工程选项，但规范层面必须支持原生 ETH。
 
 ### 2.1 参数协商与范围（规范性）
-- 协商主体与生效时点（MUST）：`E`、`D_due`、`D_rev`、`D_dis` 由 Client 与 Contractor 针对“每一笔订单”达成一致；实现必须在订单建立/接受时将其作为“订单字段”固化存储。协议不提供全局/合约级默认值。
+- 协商主体与生效时点（MUST）：`E`、`D_due`、`D_rev`、`D_dis` 由 Client 与 Contractor 针对“每一笔订单”达成一致；实现必须在订单建立/接受时将其作为“订单字段”固化存储。
+- 默认值（MUST）：协议定义以下默认值，用于调用方未显式指定时：`D_due = 1 day = 86_400s`、`D_rev = 1 day = 86_400s`、`D_dis = 7 days = 604_800s`。采用默认时，必须在订单创建时将“生效值”固化存储并在 `OrderCreated` 事件中记录。
 - 修改规则（MUST）：
   - `E` 仅可通过 `depositEscrow` 单调增加，不得减少；
   - `D_due` 与 `D_rev` 仅允许在争议发生前“单调延后”（见 SIA1/SIA2），不得缩短；
   - `D_dis` 自设置后固定，协议层不提供延长入口（禁止 `extendDispute`）。
-- 有界性（MUST）：三者必须为有限值且大于 0；为抵御链上重组，`D_dis ≥ 2·T_reorg`（由部署方按目标链给出 `T_reorg` 估计）。
-- 无默认（MUST）：实现不得在未显式传入的情况下暗设数值。
-- 建议（SHOULD）：产品/客户端可根据场景提供“参数模板/推荐区间”，但应清晰标注为建议且允许用户覆盖。
+- 有界性（MUST）：存储口径下，三者必须为有限值且大于 0；为抵御链上重组，`D_dis ≥ 2·T_reorg`（由部署方按目标链给出 `T_reorg` 估计）。
+- 零值约定（MUST）：允许在 `createOrder/createAndDeposit` 时传入 `dueSec/revSec/disSec = 0` 表示“采用协议默认值”；实现收到零值时必须以内置默认替换后再存储与发事件。除上述入口的零值语义外，其他接口与持久化字段不得为 0。
+- 建议（SHOULD）：产品/客户端可根据场景提供“参数模板/推荐区间”，默认可预填为 `1d/1d/7d`，但应允许用户覆盖。
 
 ## 3) 状态机与守卫（规范性，SSOT）
 
@@ -89,15 +90,13 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
 - E5 Executing -raiseDispute-> Disputing（发起方：client/contractor）
 - E6 Executing -cancelOrder-> Cancelled（发起方：client）
 - E7 Executing -cancelOrder-> Cancelled（发起方：contractor）
-- E8 Executing -requestForfeit-> Forfeited（发起方：client/contractor）
-- E9 Reviewing -approveReceipt-> Settled（发起方：client）
-- E10 Reviewing -timeoutSettle-> Settled（发起方：任意）
-- E11 Reviewing -raiseDispute-> Disputing（发起方：client/contractor）
-- E12 Reviewing -cancelOrder-> Cancelled（发起方：contractor）
-- E14 Disputing -settleWithSigs-> Settled（发起方：对手方（client 或 contractor 之一））
-- E15 Disputing -timeoutForfeit-> Forfeited（发起方：任意）
- - E16 Disputing -requestForfeit-> Forfeited（发起方：client/contractor）
- - E16 Disputing -requestForfeit-> Forfeited（发起方：client/contractor）
+- E8 Reviewing -approveReceipt-> Settled（发起方：client）
+- E9 Reviewing -timeoutSettle-> Settled（发起方：任意）
+- E10 Reviewing -raiseDispute-> Disputing（发起方：client/contractor）
+- E11 Reviewing -cancelOrder-> Cancelled（发起方：contractor）
+- E12 Disputing -settleWithSigs-> Settled（发起方：对手方（client 或 contractor 之一））
+- E13 Disputing -timeoutForfeit-> Forfeited（发起方：任意）
+
 
 ### 3.1 状态不变动作（SIA，MUST）
  - SIA1：`extendDue(orderId, newDueSec)`（仅 client）要求 `newDueSec > 当前 D_due`（严格延后）。
@@ -110,18 +109,16 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
 ### 3.2 守卫与副作用（MUST）
 - 参数持久化（MUST）：实现必须在订单建立/接受时持久化记录 `D_due/D_rev/D_dis` 的初值（来自双方协商）；不得在链上以“隐式默认”替代缺失值。
 - startTime/readyAt/disputeStart 为一次性锚点（设置后 MUST NOT 回拨或重置）；`D_due/D_rev` 仅允许单调延长；不提供 extendDispute。
-- G.E1：`acceptOrder` 仅当 `state=Initialized`；副作用：`startTime = now`（首次进入 Executing 时设置锚点）。
+ - G.E1：`acceptOrder` 仅当 `state=Initialized`；副作用：`startTime = now`（首次进入 Executing 时设置锚点）。允许在创建入口以 0 显式选择协议默认值（见 §2.1），但入库/事件必须写入替换后的具体秒数；不得在链上以“隐式默认”（未设置字段留空或依赖合约级缺省）替代缺失值。
 - G.E3：`markReady` 仅当 `now < startTime + D_due`；副作用：设置 `readyAt=now` 并（重新）起算评审计时 `D_rev`。
-- G.E4/E9：`approveReceipt` 仅适用于 `state ∈ {Executing, Reviewing}`（Disputing 不适用）。
-- G.E10：`timeoutSettle` 仅当 `state=Reviewing` 且 `now ≥ readyAt + D_rev`。
- - G.E5/E11：`raiseDispute` 允许于 Executing/Reviewing 任意时刻进入 Disputing；副作用：设置 `disputeStart=now`。进入 Disputing 后，托管额 E MUST 冻结；任何形式的充值/加仓 MUST `revert`（ErrFrozen；见 SIA3 状态限制）。
- - G.E8：`requestForfeit` 仅当 `state=Executing`；发起方 ∈ {client, contractor}。
- - G.E12：`cancelOrder`（contractor）仅当 `state=Reviewing`。
- - G.E15：`timeoutForfeit` 仅当 `state=Disputing` 且 `now ≥ disputeStart + D_dis`。
- - G.E16：`requestForfeit` 仅当 `state=Disputing`；发起方 ∈ {client, contractor}。
+ - G.E4/E8：`approveReceipt` 仅适用于 `state ∈ {Executing, Reviewing}`（Disputing 不适用）。
+ - G.E9：`timeoutSettle` 仅当 `state=Reviewing` 且 `now ≥ readyAt + D_rev`。
+ - G.E5/E10：`raiseDispute` 允许于 Executing/Reviewing 任意时刻进入 Disputing；副作用：设置 `disputeStart=now`。进入 Disputing 后，托管额 E MUST 冻结；任何形式的充值/加仓 MUST `revert`（ErrFrozen；见 SIA3 状态限制）。
+ - G.E11：`cancelOrder`（contractor）仅当 `state=Reviewing`。
+ - G.E13：`timeoutForfeit` 仅当 `state=Disputing` 且 `now ≥ disputeStart + D_dis`。
  - G.E6：`cancelOrder`（client）仅当“从未 Ready（`readyAt` 未设置）且 `now ≥ startTime + D_due`”。
  - G.E7：`cancelOrder`（contractor）允许（无额外守卫）。
- - G.E14：`settleWithSigs` 仅当 `state=Disputing`，且 `amountToSeller ≤ E` 并通过 EIP‑712/1271 签名、nonce、deadline 校验。
+ - G.E12：`settleWithSigs` 仅当 `state=Disputing`，且 `amountToSeller ≤ E` 并通过 EIP‑712/1271 签名、nonce、deadline 校验。
 
 ### 3.3 终态约束（MUST）
 - `Settled/Forfeited/Cancelled` 为终态；到达终态后不得再改变状态或资金记账；仅允许提现型入口读取并领取既有可领额（若有）。
@@ -138,12 +135,13 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
   - INV.7 资产与对账：SafeERC20 + 余额差核验；必要时采用白名单/适配层。对“费率/重基/非标准”代币如无法保证恒等对账，MUST `revert`（ErrAssetUnsupported）。
 - 资金去向与兼容
   - INV.8 Forfeited：`escrow → ForfeitPool`（不向外部分配），`owed/refund` 清零。ForfeitPool 为合约内的逻辑账户：罚没资产留存在本合约余额中，不向任何外部地址（含零地址/黑洞）转移；ETH 与 ERC‑20 采用一致语义（无额外转账/销毁）。
-  - INV.14 零协议费恒等式：任一结清/没收动作发生时，满足 `escrow_before = amountToSeller + refundToBuyer` 或（没收）`escrow_before = forfeited`；不允许出现协议费扣减。违反恒等式的路径 MUST `revert`（ErrFeeForbidden）。
   - INV.9 比例路径兼容（可选）：`amountToSeller = floor(escrow * num / den)`；余数全部计入买方退款。实现 MUST 使用安全的“mulDiv 向下取整”或等效无溢出实现；任何溢出/下溢 MUST revert；禁止四舍五入与精度提升。
-- INV.10 Pull 语义：状态变更仅“记账可领额”（聚合到 `balance[token][addr]`），实际转账仅在 `withdraw(token)` 发生；禁止在状态变更入口直接 `transfer`。
- - INV.11 锚点一次性：`startTime/readyAt/disputeStart` 一旦设置，MUST NOT 修改或回拨（仅允许“未设置 → 设置一次”）。
+ - INV.10 Pull 语义：状态变更仅“记账可领额”（聚合到 `balance[token][addr]`），实际转账仅在 `withdraw(token)` 发生；禁止在状态变更入口直接 `transfer`。
+  - INV.11 锚点一次性：`startTime/readyAt/disputeStart` 一旦设置，MUST NOT 修改或回拨（仅允许“未设置 → 设置一次”）。
   - INV.12 计时器规则：`D_due/D_rev` 仅允许延后（单调增加，且在进入 Disputing 前）；`D_dis` 固定且不可延长。
   - INV.13 唯一机制：无争议路径必须全额结清；争议路径采用签名金额结清；金额口径始终满足 `A ≤ E`，链上仅记录托管与结清。
+
+  - INV.14 零协议费恒等式：任一结清/没收动作发生时，满足 `escrow_before = amountToSeller + refundToBuyer` 或（没收）`escrow_before = forfeited`；不允许出现协议费扣减。违反恒等式的路径 MUST `revert`（ErrFeeForbidden）。
 
 ## 5) 安全与威胁模型
 - 签名与重放（MUST）：采用 EIP‑712/1271；签名域至少包含 `{chainId, contract, orderId, amountToSeller(=A), proposer, acceptor, nonce, deadline}`；`amountToSeller ≤ E`；`nonce` 的作用域至少为 `{orderId, signer}` 且一次性消费；`deadline` 基于 `block.timestamp` 判定。必须防止跨订单/跨合约/跨链重放。
@@ -163,13 +161,14 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
 
 ## 6) 收益比较与均衡（SPE 概要）
 - PR.1 付款不劣：`u_C(pay) − u_C(forfeit) = E − A ≥ 0`；当 `A<E` 时严格 > 0。
-- PR.2 卖方即刻没收为劣：若 `R(t) < A`，则 `A − R(t) > 0 ≥ −I(t)`。
+ - PR.2 卖方没收为劣：若 `R(t) < A`，则 `A − R(t) > 0 ≥ −I(t)`。
 - PR.3 SPE（充分条件）：存在 `A ∈ (C, min(V, E)]` 且 `κ(Review/Dispute)=1`，则“交付并结清”为子博弈完美均衡路径。
 - PR.4 比较静态：Top‑up 单调把买方偏好由 `forfeit/tie` 推向 `pay`。
 
 ## 7) API 与事件契约（映射状态机/不变量）
 - 函数（最小集）：
   - `createOrder(tokenAddr, contractor, dueSec, revSec, disSec) -> orderId`
+    - 零值采用默认（MUST）：若 `dueSec/revSec/disSec` 传入 0，表示采用协议默认值（`1d/1d/7d`）；事件 `OrderCreated` 中的 `dueSec/revSec/disSec` 必须记录替换后的“生效值”（非 0）。
   - `createAndDeposit(tokenAddr, contractor, dueSec, revSec, disSec, amount)`（payable）→ 创建并充值（ETH: `msg.value==amount`；ERC‑20: `transferFrom` amount）
   - `depositEscrow(orderId, amount)`（payable；同上资产规则）
   - `acceptOrder(orderId)`；`markReady(orderId)`；`approveReceipt(orderId)`；`timeoutSettle(orderId)`
@@ -197,7 +196,7 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
   - MET.3 资金滞留余额；
   - MET.4 争议时长分布、协商接受率（公式：协商接受率 = `AmountSettled` 事件数 / `DisputeRaised` 事件数；建议观测窗口 7/30 天滚动；撤销/过期不计入分子；每单仅计首个 `AmountSettled`；跨窗口滚动按事件时间戳归属；分母按“同一订单在结清/没收前的首次 `DisputeRaised` 计 1 次”，重复触发/撤销不重复计数）。
   - MET.5 零协议费违规计数：期望为 0（来源：回执内 `ErrFeeForbidden` 回滚次数；因回滚不发事件，需基于交易回执/节点日志；离线对账作为辅证）。
-  - MET.6 状态转换延迟/吞吐（E1/E3/E5/E7/E12 等非终态转换的时延与速率）；
+  - MET.6 状态转换延迟/吞吐（E1/E3/E5/E10 等非终态转换的时延与速率）；
   - GOV.1 终态分布（成功/没收/取消）；
 - GOV.2 `A/E` 基线分布（以进入 Reviewing 或 Disputing 时的 E 为基线，见 VER）。
 - SLO（示例）：提现成功率 ≥ 99.9%；结清到账 P50 < 1 区块、P95 < 3 区块；资金滞留余额 < 0.1%（周）。
@@ -222,26 +221,22 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
 风格说明：本节“转换箭头”的规范写法为 ASCII `->`；如渲染为 Unicode 箭头（→），视为等价显示，不改变含义。
 信息性示例（Trace）：
  - Trace.1：E4（Executing->Settled，approveReceipt） -> API: `approveReceipt` -> INV.1 -> EVT: `Settled` -> MET: 结清延迟/资金滞留。
- - Trace.2：E14（Disputing->Settled，settleWithSigs） -> API: `settleWithSigs` -> INV.2 -> EVT: `AmountSettled, Settled` -> MET: 争议时长/协商接受率。
- - Trace.3：E15（Disputing->Forfeited，timeoutForfeit） -> API: `timeoutForfeit` -> EVT: `Forfeited` -> GOV: 没收率/争议时长。
-
-全量映射（覆盖 E1..E16；至少一项指标）：
-- E1 Initialized->Executing（acceptOrder） -> API: `acceptOrder` -> INV: INV.11 -> EVT: (none) -> MET: MET.6（接单延迟）。
+ - Trace.2：E12（Disputing->Settled，settleWithSigs） -> API: `settleWithSigs` -> INV.2 -> EVT: `AmountSettled, Settled` -> MET: 争议时长/协商接受率。
+ - Trace.3：E13（Disputing->Forfeited，timeoutForfeit） -> API: `timeoutForfeit` -> EVT: `Forfeited` -> GOV: 没收率/争议时长。
+全量映射（覆盖所有允许的转换；至少一项指标；编号对齐）：
+- E1 Initialized->Executing（acceptOrder） -> API: `acceptOrder` -> INV: INV.11 -> EVT: `Accepted` -> MET: MET.6（接单延迟）。
 - E2 Initialized->Cancelled（cancel） -> API: `cancelOrder` -> INV: INV.3（退款计算） -> EVT: `Cancelled` -> GOV: GOV.1。
 - E3 Executing->Reviewing（markReady） -> API: `markReady` -> INV: INV.11 -> EVT: (none) -> MET: MET.6（执行->评审时延）。
 - E4 Executing->Settled（approveReceipt） -> API: `approveReceipt` -> INV.1 -> EVT: `Settled` -> MET: MET.1/MET.3。
-- E5 Executing->Disputing（raiseDispute） -> API: `raiseDispute` -> INV: INV.11 -> EVT: (none) -> MET: MET.6（争议触发时延）。
+ - E5 Executing->Disputing（raiseDispute） -> API: `raiseDispute` -> INV: INV.11 -> EVT: `DisputeRaised` -> MET: MET.6（争议触发时延）。
 - E6 Executing->Cancelled（cancel: Client 条件） -> API: `cancelOrder` -> INV: INV.3 -> EVT: `Cancelled` -> GOV: GOV.1。
 - E7 Executing->Cancelled（cancel: Contractor） -> API: `cancelOrder` -> INV: INV.3 -> EVT: `Cancelled` -> GOV: GOV.1。
-- E9 Reviewing->Settled（approveReceipt） -> API: `approveReceipt` -> INV.1 -> EVT: `Settled` -> MET: MET.1/MET.3。
- - E8 Executing->Forfeited（requestForfeit） -> API: `requestForfeit` -> INV: INV.8 -> EVT: `Forfeited` -> GOV: GOV.1。
- - E9 Reviewing->Settled（approveReceipt） -> API: `approveReceipt` -> INV.1 -> EVT: `Settled` -> MET: MET.1/MET.3。
-- E10 Reviewing->Settled（timeoutSettle） -> API: `timeoutSettle` -> INV: INV.1 -> EVT: `Settled` -> MET: MET.1。
-- E11 Reviewing->Disputing（raiseDispute） -> API: `raiseDispute` -> INV: INV.11 -> EVT: (none) -> MET: MET.6（争议触发时延）。
-- E12 Reviewing->Cancelled（cancel: Contractor） -> API: `cancelOrder` -> INV: INV.3 -> EVT: `Cancelled` -> GOV: GOV.1。
- - E13 Reviewing->Forfeited（requestForfeit） -> API: `requestForfeit` -> INV: INV.8 -> EVT: `Forfeited` -> GOV: GOV.1。
- - E14 Disputing->Settled（settleWithSigs） -> API: `settleWithSigs` -> INV: INV.2 -> EVT: `AmountSettled, Settled` -> MET: MET.4（协商接受率）。
- - E15 Disputing->Forfeited（timeoutForfeit） -> API: `timeoutForfeit` -> INV: INV.8 -> EVT: `Forfeited` -> GOV: GOV.1/GOV.3（争议时长）。
- - E16 Disputing->Forfeited（requestForfeit） -> API: `requestForfeit` -> INV: INV.8 -> EVT: `Forfeited` -> GOV: GOV.1。
+- E8 Reviewing->Settled（approveReceipt） -> API: `approveReceipt` -> INV: INV.1 -> EVT: `Settled` -> MET: MET.1/MET.3。
+- E9 Reviewing->Settled（timeoutSettle） -> API: `timeoutSettle` -> INV: INV.1 -> EVT: `Settled` -> MET: MET.1。
+ - E10 Reviewing->Disputing（raiseDispute） -> API: `raiseDispute` -> INV: INV.11 -> EVT: `DisputeRaised` -> MET: MET.6（争议触发时延）。
+- E11 Reviewing->Cancelled（cancel: Contractor） -> API: `cancelOrder` -> INV: INV.3 -> EVT: `Cancelled` -> GOV: GOV.1。
+- E12 Disputing->Settled（settleWithSigs） -> API: `settleWithSigs` -> INV: INV.2 -> EVT: `AmountSettled, Settled` -> MET: MET.4（协商接受率）。
+- E13 Disputing->Forfeited（timeoutForfeit） -> API: `timeoutForfeit` -> INV: INV.8 -> EVT: `Forfeited` -> GOV: GOV.1/GOV.3（争议时长）。
+
 
 ---
