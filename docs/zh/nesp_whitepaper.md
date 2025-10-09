@@ -240,16 +240,16 @@ NESP 正是这样的底座：**链下协商，链上约束；以对称没收威�
 - `extendReview(orderId, newRevSec)`：contractor 单调延长评审窗口。
 
 ### 6.2 事件（最小字段）
-- `OrderCreated(orderId, client, contractor, tokenAddr, dueSec, revSec, disSec, ts)`
-- `EscrowDeposited(orderId, from, amount, newEscrow, ts, via)`
-- `Accepted(orderId, escrow, ts)`
-- `DisputeRaised(orderId, by, ts)`
-- `Settled(orderId, amountToSeller, escrow, ts, actor)`（`actor ∈ {Client, Timeout}`）
-- `AmountSettled(orderId, proposer, acceptor, amountToSeller, nonce, ts)`
-- `Forfeited(orderId, ts)`
-- `Cancelled(orderId, ts, cancelledBy)`（`cancelledBy ∈ {Client, Contractor}`）
-- `BalanceCredited(orderId, to, tokenAddr, amount, kind, ts)`（`kind ∈ {Payout, Refund}`）
-- `BalanceWithdrawn(to, tokenAddr, amount, ts)`
+- `OrderCreated(orderId, client, contractor, tokenAddr, dueSec, revSec, disSec, ts)`：订单建立时触发，固化角色与时间参数。
+- `EscrowDeposited(orderId, from, amount, newEscrow, ts, via)`：托管额充值成功后触发，记录充值来源与调用通道。
+- `Accepted(orderId, escrow, ts)`：承接订单（进入 Executing）时触发，确认当前托管额。
+- `DisputeRaised(orderId, by, ts)`：进入争议状态时触发，记录争议发起方。
+- `Settled(orderId, amountToSeller, escrow, ts, actor)`（`actor ∈ {Client, Timeout}`）：无争议或评审超时结清时触发。
+- `AmountSettled(orderId, proposer, acceptor, amountToSeller, nonce, ts)`：双方签名协商金额 A 后触发。
+- `Forfeited(orderId, ts)`：争议期超时被没收时触发。
+- `Cancelled(orderId, ts, cancelledBy)`（`cancelledBy ∈ {Client, Contractor}`）：订单被取消时触发。
+- `BalanceCredited(orderId, to, tokenAddr, amount, kind, ts)`（`kind ∈ {Payout, Refund}`）：结清/退款记账到可提余额时触发。
+- `BalanceWithdrawn(to, tokenAddr, amount, ts)`：用户提现成功时触发。
 
 ### 6.3 授权与来源（2771/4337）
 - `EscrowDeposited.via ∈ {address(0), forwarderAddr, entryPointAddr}`；`address(0)` 表示直接调用（`msg.sender == tx.origin`）。
@@ -293,7 +293,7 @@ NESP 正是这样的底座：**链下协商，链上约束；以对称没收威�
 #### 计数与去重规则（口径约束）
 - `DisputeRaised`：同一订单在结清/没收前的首次计 1 次；重复触发/撤销不重复计数。
 - `AmountSettled`：每单仅计首个；重复上链不重复计数。
-- 可重复事件（订单维度）：`EscrowDeposited`（允许多次充值）、`BalanceWithdrawn`（按余额领取节奏可多次）。
+- 可重复事件（订单维度）：`EscrowDeposited`（允许多次充值或第三方赠与）、`BalanceWithdrawn`（余额领取可多次提取）。
 - 其它事件：每订单计一次（`OrderCreated/Accepted/Settled/Forfeited/Cancelled/BalanceCredited`）。
 
 #### 新增：GOV.3 争议时长
@@ -350,7 +350,7 @@ NESP 正是这样的底座：**链下协商，链上约束；以对称没收威�
   1) 评估 R1–R4（以事件/度量为证据）；
   2) 计算 `SLO_T(W)` 与 `Δ_BASELINE(W)`（`f/数据源/窗口` 由 CHG 工件绑定）；
   3) 依据结果执行运行手册动作（停写/白名单/回滚）。
-- WHAT：`Effectiveness(W)` 可单点判定（True/False）。
+- WHAT：`Effectiveness(W)` 可单点判定（True/False）。 如任一参数更新，应同步更新 CHG 记录，以保持审计链条。
 
 ### 10.1 判定谓词
 - `Effectiveness(W) := (R1 ∧ R2 ∧ R3 ∧ R4) ∧ SLO_T(W) ∧ Δ_BASELINE(W) ≥ 0`。
@@ -360,7 +360,7 @@ NESP 正是这样的底座：**链下协商，链上约束；以对称没收威�
 - `θ`：没收率上限（`forfeit_rate ≤ θ`）
 - `β`：协商接受率下限（`acceptance_rate ≥ β`）
 - `τ`：结清 P95 延迟上限（`p95_settle ≤ τ`）
-- `f`：对照加权函数（对 succ/forf/p95/acc 的加权）
+- `f`：对照加权函数（对 succ/forf/p95/acc 的加权）；上述参数/数据源应记录在 CHG 工件（例如 CHG:SLO-Runbook 或 Effective-Params）中便于版本化。
 
 ### 10.3 判定流程
 - 先验收 `SLO_T(W)`，再计算 `Δ_BASELINE(W)`，最后核对 R1–R4 的观测证据。
