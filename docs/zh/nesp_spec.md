@@ -99,17 +99,37 @@ English Title: A2A No‑Arbitration Escrow Settlement Protocol (NESP)
 
 
 ### 3.1 状态不变动作（SIA，MUST）
- - SIA1：`extendDue(orderId, newDueSec)`（仅 client）要求 `newDueSec > 当前 D_due`（严格延后）。
- - SIA2：`extendReview(orderId, newRevSec)`（仅 contractor）要求 `newRevSec > 当前 D_rev`（严格延后，按时长口径）。
- - SIA3：`depositEscrow(orderId, amount)`（`payable`）要求 `amount > 0`，且 `escrow ← escrow + amount`（单调增加）。调用方 MUST 为 `client` 或受其授权的转发/打包方（如 EIP‑2771/4337 语义）；若实现允许第三方充值，则该充值视为自担没收风险的无条件赠与，不改变订单权利义务。对“授权”的验证 MUST 证明 `client` 已对本次 `orderId/amount` 授权（例如经 2771/4337 的客户端签名校验）；授权验证失败 MUST `revert`（ErrUnauthorized）。入口顺序 MUST 先校验“冻结/终态”→“授权/主体”→“金额/资产”：`state ∈ {Disputing}` → `ErrFrozen`；`state ∈ {Settled, Forfeited, Cancelled}` → `ErrInvalidState`；其余经授权校验后方可记账。
+ - SIA1：`extendDue(orderId, newDueSec)` 要求 `newDueSec > 当前 D_due`（严格延后），调用主体 `subject` MUST 等于 `client`。
+ - SIA2：`extendReview(orderId, newRevSec)` 要求 `newRevSec > 当前 D_rev`（严格延后），调用主体 `subject` MUST 等于 `contractor`。
+ - SIA3：`depositEscrow(orderId, amount)`（`payable`）要求 `amount > 0`，且 `escrow ← escrow + amount`（单调增加）。
+  - 调用主体 `subject` 可分两类：
+    1. 受信任的 2771/4337 路径：实现 MUST 解析 `subject` 并验证 `subject == client`；失败 MUST `revert`（`ErrUnauthorized`）；
+    2. 其他任意地址：视为自担没收风险的无条件赠与（不改变订单权利义务），但该地址仍需完成转账（见下）。
+  - 入口顺序：`state ∈ {Disputing}` → `ErrFrozen`；`state ∈ {Settled, Forfeited, Cancelled}` → `ErrInvalidState`；其余进入金额/资产校验。
   - 若订单资产为原生 ETH：MUST `msg.value == amount`；
-  - 若为 ERC‑20：MUST `msg.value == 0`，并使用 SafeERC20 `transferFrom(client, this, amount)` 成功后记账。
+  - 若为 ERC‑20：MUST `msg.value == 0`，并定义 `payer ≡ subject`；实现 MUST 调用 `SafeERC20.transferFrom(payer, this, amount)` 成功后记账——
+    - 对于受信路径（payer = client），意味着从 client 账户扣划；
+    - 对于其他地址（赠与），payer = 调用主体，需自行授权或预先批准上述转账。
 - 适用范围：SIA3 允许于 Initialized/Executing/Reviewing；在 Disputing 及任何终态禁止充值（Top‑up）。
 
 ### 3.2 守卫与副作用（MUST）
 - 参数持久化（MUST）：实现必须在订单建立/接受时持久化记录 `D_due/D_rev/D_dis` 的初值（来自双方协商）；不得在链上以“隐式默认”替代缺失值。
 - startTime/readyAt/disputeStart 为一次性锚点（设置后 MUST NOT 回拨或重置）；`D_due/D_rev` 仅允许单调延长；不提供 extendDispute。
- - G.E1：`acceptOrder` 仅当 `state=Initialized`；副作用：`startTime = now`（首次进入 Executing 时设置锚点）。允许在创建入口以 0 显式选择协议默认值（见 §2.1），但入库/事件必须写入替换后的具体秒数；不得在链上以“隐式默认”（未设置字段留空或依赖合约级缺省）替代缺失值。
+- 调用主体（Resolved Subject）定义：
+  - 直连：`subject = msg.sender`，`via = address(0)`；
+  - EIP‑2771：若 `isTrustedForwarder(msg.sender)=true`，`subject = _msgSender()`（由受信转发器解析的原始调用者）；
+  - EIP‑4337：若 `msg.sender == EntryPoint`，`subject = userOp.sender`（账户地址）。
+
+- 主体约束（MUST）：
+  - `markReady(orderId)`：`subject == contractor`；
+  - `approveReceipt(orderId)`、`extendDue(orderId, newDueSec)`：`subject == client`；
+  - `extendReview(orderId, newRevSec)`：`subject == contractor`；
+  - `raiseDispute(orderId)`：`subject ∈ {client, contractor}`；
+  - `cancelOrder(orderId)`：按照守卫分支检查 `subject == client`（G.E6）或 `subject == contractor`（G.E7/G.E11）；
+  - `settleWithSigs(orderId, …)`：`subject ∈ {client, contractor}`；
+  - `timeoutSettle(orderId)`、`timeoutForfeit(orderId)`：主体不限制（任意地址可触发）。
+
+- G.E1：`acceptOrder` 仅当 `state=Initialized`，且调用主体 `subject` MUST 等于订单的 `contractor`；否则 MUST `revert`（`ErrUnauthorized`）。副作用：`startTime = now`（首次进入 Executing 时设置锚点）。允许在创建入口以 0 显式选择协议默认值（见 §2.1），但入库/事件必须写入替换后的具体秒数；不得在链上以“隐式默认”（未设置字段留空或依赖合约级缺省）替代缺失值。
 - G.E3：`markReady` 仅当 `now < startTime + D_due`；副作用：设置 `readyAt=now` 并（重新）起算评审计时 `D_rev`。
  - G.E4/E8：`approveReceipt` 仅适用于 `state ∈ {Executing, Reviewing}`（Disputing 不适用）。
  - G.E9：`timeoutSettle` 仅当 `state=Reviewing` 且 `now ≥ readyAt + D_rev`。
