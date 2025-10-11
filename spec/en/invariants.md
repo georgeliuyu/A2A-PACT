@@ -1,0 +1,2 @@
+// Invariants & Guards (English · placeholder)
+

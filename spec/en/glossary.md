@@ -1,0 +1,2 @@
+// Glossary (English · placeholder)
+
