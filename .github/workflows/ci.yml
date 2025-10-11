@@ -1,0 +1,16 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  lint-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check repo structure
+        run: |
+          echo "CI placeholder — add markdown/solidity linters and tests when reference code lands."
+
